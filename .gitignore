@@ -1,3 +1,11 @@
+# Ignora toda a pasta .vscode
+.vscode/*
+
+# Mas permite que as recomendações de extensões e tarefas sejam compartilhadas
+!.vscode/extensions.json
+!.vscode/tasks.json
+!.vscode/launch.json
+
 # Prerequisites
 *.d
 

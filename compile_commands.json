@@ -1,0 +1,12 @@
+[
+  {
+    "directory": "C:/Users/Renardo/Desktop/Renardo Download Manager",
+    "command": "C:/msys64/mingw64/bin/gcc.exe -Wall -Wextra -Iinclude -c src/main.c -o build/main.o",
+    "file": "src/main.c"
+  },
+  {
+    "directory": "C:/Users/Renardo/Desktop/Renardo Download Manager",
+    "command": "C:/msys64/mingw64/bin/gcc.exe -Wall -Wextra -Iinclude -c src/downloader.c -o build/downloader.o",
+    "file": "src/downloader.c"
+  }
+]

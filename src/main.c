@@ -1,9 +1,13 @@
+#include <curl/curl.h>
 #include <stdio.h>
 #include <string.h>
 
 #include "downloader.h"
 
 int main(int argc, char *argv[]) {
+
+    curl_global_init(CURL_GLOBAL_DEFAULT);
+
     if (argc < 2 || argc > 3) {
         printf("Usage: %s <URL> [filename]\n", argv[0]);
         return 1;
@@ -14,14 +18,11 @@ int main(int argc, char *argv[]) {
 
     if (argc == 3) {
         filename = argv[2];
-    } else {
-        filename = strrchr(url, '/');
-        if (filename && *(filename + 1) != '\0') {
-            filename++; // Skip the slash
-        } else {
-            filename = "downloaded_file"; // Fallback if no slash or slash is at the end
-        }
     }
 
-    return download_file(url, filename);
+    int result = download_file(url, filename);
+
+    curl_global_cleanup();
+
+    return result;
 }
