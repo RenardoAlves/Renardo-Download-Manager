@@ -1,3 +1,6 @@
+# Qualquer arquivo baixado localmente
+downloads/
+
 # Ignora toda a pasta .vscode
 .vscode/*
 
