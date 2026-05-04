@@ -14,6 +14,17 @@ void disable_quick_edit() {
 }
 #endif
 
+void format_size(long long bytes, char *out, size_t size) {
+    const char *units[] = {"B", "KB", "MB", "GB", "TB"};
+    int unit = 0;
+    double dbytes = (double)bytes;
+    while (dbytes >= 1024 && unit < 4) {
+        dbytes /= 1024.0;
+        unit++;
+    }
+    snprintf(out, size, "%.2f %s", dbytes, units[unit]);
+}
+
 void show_help(const char *exe) {
     printf("Usage:\n");
     printf("  %s daemon         - Start the background manager\n", exe);
@@ -22,6 +33,7 @@ void show_help(const char *exe) {
     printf("  %s stop <id>      - Cancel a download\n", exe);
     printf("  %s monitor        - Show real time tracking of the downloads\n", exe);
 }
+
 
 int send_command(DMMessage *msg) {
     HANDLE pipe = CreateFile(PIPE_NAME, GENERIC_READ | GENERIC_WRITE, 0, NULL, OPEN_EXISTING, 0, NULL);
@@ -37,15 +49,25 @@ int send_command(DMMessage *msg) {
         StatusResponse resp;
         DWORD read;
         if (ReadFile(pipe, &resp, sizeof(resp), &read, NULL)) {
-            printf("\n--- Active Downloads ---\n");
+            printf("\n%-4s %-23s %-8s %-18s %-12s %-10s\n", "ID", "Filename", "Done", "Size", "Status", "Speed");
+            printf("--------------------------------------------------------------------------------------\n");
             for (int i = 0; i < resp.job_count; i++) {
                 JobInfo *j = &resp.jobs[i];
+                char current_sz[32], total_sz[32], speed_sz[32], combined_sz[64];
+                format_size(j->downloaded_size, current_sz, sizeof(current_sz));
+                format_size(j->total_size, total_sz, sizeof(total_sz));
+                format_size(j->speed, speed_sz, sizeof(speed_sz));
+                
+                snprintf(combined_sz, sizeof(combined_sz), "%s/%s", current_sz, total_sz);
+
                 const char *st = (j->status == DM_STATUS_DOWNLOADING) ? "DOWNLOADING" : 
                                  (j->status == DM_STATUS_COMPLETED) ? "COMPLETED" :
                                  (j->status == DM_STATUS_FAILED) ? "FAILED" :
                                  (j->status == DM_STATUS_CANCELLING) ? "CANCELLING" :
                                  (j->status == DM_STATUS_CANCELLED) ? "CANCELLED" : "PENDING";
-                printf("[%d] %-20s | %6.2f%% | %s\n", j->id, j->filename, j->progress, st);
+                
+                printf("[%2d] %-20.20s %6.1f%% %-20s %-12s %s/s\n", 
+                       j->id, j->filename, j->progress, combined_sz, st, speed_sz);
             }
             if (resp.job_count == 0) printf("No downloads active.\n");
         }
@@ -55,17 +77,6 @@ int send_command(DMMessage *msg) {
     return 0;
 }
 
-void print_progress_bar(double progress) {
-    int width = 30;
-    int pos = (int)(width * (progress / 100.0));
-    printf("[");
-    for (int i = 0; i < width; i++) {
-        if (i < pos) printf("=");
-        else if (i == pos) printf(">");
-        else printf(" ");
-    }
-    printf("] %6.2f%%", progress);
-}
 
 void monitor_ui() {
     DMMessage msg = {0};

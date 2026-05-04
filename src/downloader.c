@@ -12,6 +12,7 @@ struct DownloadContext {
     char deduced_filename[256];
     int name_is_fixed;
     JobInfo *info;
+    CURL *curl; // Added to access speed in callback
 };
 
 // helper to extract a fallback filename from a URL
@@ -85,8 +86,17 @@ static int progress_callback(void *clientp, curl_off_t dltotal, curl_off_t dlnow
         if (ctx->info->status == DM_STATUS_CANCELLING) {
             return 1; // Aborts the transfer
         }
+        ctx->info->downloaded_size = (long long)dlnow;
+        ctx->info->total_size = (long long)dltotal;
+        
         if (dltotal > 0) {
             ctx->info->progress = (double)dlnow / (double)dltotal * 100.0;
+        }
+        // Update speed in real-time
+        if (ctx->curl) {
+            curl_off_t speed_t;
+            curl_easy_getinfo(ctx->curl, CURLINFO_SPEED_DOWNLOAD_T, &speed_t);
+            ctx->info->speed = (long long)speed_t;
         }
     }
     return 0;
@@ -140,6 +150,7 @@ int download_file(const char *url, const char *provided_filename, JobInfo *info)
     printf("Downloading: %s\n", url);
 
     curl = curl_easy_init();
+    ctx.curl = curl; // Pass handle to context
     if (curl) {
         curl_easy_setopt(curl, CURLOPT_URL, url);
         

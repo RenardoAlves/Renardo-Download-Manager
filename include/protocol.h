@@ -15,7 +15,7 @@ typedef enum {
 
 typedef struct {
     CommandType type;
-    int job_id; // Added for STOP command
+    int job_id;
     char url[MAX_URL_LEN];
     char filename[MAX_FILENAME_LEN];
 } DMMessage;
@@ -34,6 +34,8 @@ typedef struct {
     char filename[MAX_FILENAME_LEN];
     double progress;
     long long speed;
+    long long downloaded_size; // Added
+    long long total_size;      // Added
     JobStatus status;
 } JobInfo;
 
