@@ -1,42 +1,39 @@
-#include <windows.h>
 #include <stdio.h>
-#include <process.h>
+#include <stdlib.h>
+#include <string.h>
+#include <pthread.h>
 #include <stdbool.h>
 #include "protocol.h"
 #include "downloader.h"
+#include "network_utils.h"
 
 StatusResponse global_status = {0};
-HANDLE status_mutex;
+pthread_mutex_t status_mutex = PTHREAD_MUTEX_INITIALIZER;
 
-// Thread worker argument
 typedef struct {
     char url[MAX_URL_LEN];
     char filename[MAX_FILENAME_LEN];
     int job_index;
 } ThreadArgs;
 
-unsigned __stdcall worker_thread(void *arg) {
+void* worker_thread(void *arg) {
     ThreadArgs *args = (ThreadArgs *)arg;
     
-    JobInfo *info = NULL;
-    
-    WaitForSingleObject(status_mutex, INFINITE);
-    info = &global_status.jobs[args->job_index];
-    ReleaseMutex(status_mutex);
+    pthread_mutex_lock(&status_mutex);
+    JobInfo *info = &global_status.jobs[args->job_index];
+    pthread_mutex_unlock(&status_mutex);
 
     download_file(args->url, args->filename, info);
 
     free(args);
-    return 0;
+    return NULL;
 }
 
-void handle_client(HANDLE pipe) {
+void handle_client(socket_t client_sock) {
     DMMessage msg;
-    DWORD read;
-
-    if (ReadFile(pipe, &msg, sizeof(msg), &read, NULL)) {
+    if (net_recv(client_sock, &msg, sizeof(msg)) > 0) {
         if (msg.type == DM_CMD_ADD) {
-            WaitForSingleObject(status_mutex, INFINITE);
+            pthread_mutex_lock(&status_mutex);
             if (global_status.job_count < MAX_JOBS) {
                 int idx = global_status.job_count++;
                 JobInfo *info = &global_status.jobs[idx];
@@ -49,17 +46,18 @@ void handle_client(HANDLE pipe) {
                 strncpy(args->filename, msg.filename, MAX_FILENAME_LEN);
                 args->job_index = idx;
                 
-                _beginthreadex(NULL, 0, worker_thread, args, 0, NULL);
+                pthread_t tid;
+                pthread_create(&tid, NULL, worker_thread, args);
+                pthread_detach(tid);
                 printf("Added job: %s\n", msg.url);
             }
-            ReleaseMutex(status_mutex);
+            pthread_mutex_unlock(&status_mutex);
         } else if (msg.type == DM_CMD_LIST) {
-            DWORD written;
-            WaitForSingleObject(status_mutex, INFINITE);
-            WriteFile(pipe, &global_status, sizeof(global_status), &written, NULL);
-            ReleaseMutex(status_mutex);
+            pthread_mutex_lock(&status_mutex);
+            net_send(client_sock, &global_status, sizeof(global_status));
+            pthread_mutex_unlock(&status_mutex);
         } else if (msg.type == DM_CMD_STOP) {
-            WaitForSingleObject(status_mutex, INFINITE);
+            pthread_mutex_lock(&status_mutex);
             for (int i = 0; i < global_status.job_count; i++) {
                 if (global_status.jobs[i].id == msg.job_id) {
                     if (global_status.jobs[i].status == DM_STATUS_DOWNLOADING || 
@@ -70,42 +68,31 @@ void handle_client(HANDLE pipe) {
                     break;
                 }
             }
-            ReleaseMutex(status_mutex);
+            pthread_mutex_unlock(&status_mutex);
         }
     }
-    DisconnectNamedPipe(pipe);
+    net_close(client_sock);
 }
 
-#include <stdlib.h>
-
 int daemon_main() {
-    status_mutex = CreateMutex(NULL, FALSE, NULL);
-    printf("Download Manager Daemon started.\n");
-    printf("Listening on %s\n", PIPE_NAME);
+    net_init();
 
-    while (true) {
-        HANDLE pipe = CreateNamedPipe(
-            PIPE_NAME,
-            PIPE_ACCESS_DUPLEX,
-            PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT,
-            1,
-            sizeof(StatusResponse),
-            sizeof(DMMessage),
-            0,
-            NULL
-        );
-
-        if (pipe == INVALID_HANDLE_VALUE) {
-            fprintf(stderr, "Failed to create pipe.\n");
-            return 1;
-        }
-
-        if (ConnectNamedPipe(pipe, NULL) || GetLastError() == ERROR_PIPE_CONNECTED) {
-            handle_client(pipe);
-        }
-
-        CloseHandle(pipe);
+    socket_t server_sock = net_create_server(DEFAULT_PORT);
+    if (server_sock == INVALID_SOCKET) {
+        printf("Failed to start server on port %d\n", DEFAULT_PORT);
+        return 1;
     }
 
+    printf("Download Manager Daemon started on port %d.\n", DEFAULT_PORT);
+
+    while (true) {
+        socket_t client_sock = net_accept(server_sock);
+        if (client_sock != INVALID_SOCKET) {
+            handle_client(client_sock);
+        }
+    }
+
+    net_close(server_sock);
+    net_cleanup();
     return 0;
 }

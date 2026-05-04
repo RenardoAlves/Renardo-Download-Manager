@@ -1,9 +1,9 @@
 SHELL = C:/msys64/usr/bin/sh.exe
 CC = gcc
 CFLAGS = -Wall -Wextra -Iinclude
-LDFLAGS = -LC:/msys64/mingw64/lib -lcurl
+LDFLAGS = -LC:/msys64/mingw64/lib -lcurl -lws2_32 -lpthread
 
-SRC = src/main.c src/downloader.c src/daemon.c
+SRC = src/main.c src/downloader.c src/daemon.c src/network_utils.c
 OUT = build/dm.exe
 
 all:

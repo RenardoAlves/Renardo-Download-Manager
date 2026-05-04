@@ -1,7 +1,7 @@
 #ifndef PROTOCOL_H
 #define PROTOCOL_H
 
-#define PIPE_NAME "\\\\.\\pipe\\dm_manager"
+#define DEFAULT_PORT 12345
 #define MAX_URL_LEN 1024
 #define MAX_FILENAME_LEN 256
 #define MAX_JOBS 10
@@ -34,8 +34,8 @@ typedef struct {
     char filename[MAX_FILENAME_LEN];
     double progress;
     long long speed;
-    long long downloaded_size; // Added
-    long long total_size;      // Added
+    long long downloaded_size;
+    long long total_size;
     JobStatus status;
 } JobInfo;
 

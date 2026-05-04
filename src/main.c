@@ -1,18 +1,26 @@
 #include <curl/curl.h>
 #include <stdio.h>
 #include <string.h>
-
-#include "downloader.h"
+#include <stdlib.h>
 
 #ifdef _WIN32
-#include <windows.h>
+    #include <windows.h>
+#else
+    #include <unistd.h>
+#endif
+
+#include "downloader.h"
+#include "protocol.h"
+#include "network_utils.h"
+
 void disable_quick_edit() {
+#ifdef _WIN32
     HANDLE hInput = GetStdHandle(STD_INPUT_HANDLE);
     DWORD prev_mode;
     GetConsoleMode(hInput, &prev_mode);
     SetConsoleMode(hInput, (prev_mode & ~ENABLE_QUICK_EDIT_MODE) | ENABLE_EXTENDED_FLAGS);
-}
 #endif
+}
 
 void format_size(long long bytes, char *out, size_t size) {
     const char *units[] = {"B", "KB", "MB", "GB", "TB"};
@@ -30,25 +38,22 @@ void show_help(const char *exe) {
     printf("  %s daemon         - Start the background manager\n", exe);
     printf("  %s add <URL> [fn] - Add a new download\n", exe);
     printf("  %s list           - Show active downloads\n", exe);
-    printf("  %s stop <id>      - Cancel a download\n", exe);
     printf("  %s monitor        - Show real time tracking of the downloads\n", exe);
+    printf("  %s stop <id>      - Cancel a download\n", exe);
 }
 
-
 int send_command(DMMessage *msg) {
-    HANDLE pipe = CreateFile(PIPE_NAME, GENERIC_READ | GENERIC_WRITE, 0, NULL, OPEN_EXISTING, 0, NULL);
-    if (pipe == INVALID_HANDLE_VALUE) {
+    socket_t sock = net_connect("127.0.0.1", DEFAULT_PORT);
+    if (sock == INVALID_SOCKET) {
         fprintf(stderr, "Error: Could not connect to daemon. Is it running? (Try: dm daemon)\n");
         return 1;
     }
 
-    DWORD written;
-    WriteFile(pipe, msg, sizeof(DMMessage), &written, NULL);
+    net_send(sock, msg, sizeof(DMMessage));
     
     if (msg->type == DM_CMD_LIST) {
         StatusResponse resp;
-        DWORD read;
-        if (ReadFile(pipe, &resp, sizeof(resp), &read, NULL)) {
+        if (net_recv(sock, &resp, sizeof(resp)) > 0) {
             printf("\n%-4s %-23s %-8s %-18s %-12s %-10s\n", "ID", "Filename", "Done", "Size", "Status", "Speed");
             printf("--------------------------------------------------------------------------------------\n");
             for (int i = 0; i < resp.job_count; i++) {
@@ -73,32 +78,34 @@ int send_command(DMMessage *msg) {
         }
     }
 
-    CloseHandle(pipe);
+    net_close(sock);
     return 0;
 }
-
 
 void monitor_ui() {
     DMMessage msg = {0};
     msg.type = DM_CMD_LIST;
-    system("cls"); // Limpa a tela inicial
+    system("cls");
 
     while (1) {
-        printf("\033[H"); // Move o cursor para o topo (evita piscar a tela)
+        printf("\033[H");
         printf("=== DM REAL-TIME MONITOR === (Pressione Ctrl+C para sair)\n\n");
         send_command(&msg);
-        Sleep(500); // Atualiza a cada meio segundo
+#ifdef _WIN32
+        Sleep(500);
+#else
+        usleep(500000);
+#endif
     }
 }
 
-
 int main(int argc, char *argv[]) {
-#ifdef _WIN32
     disable_quick_edit();
-#endif
+    net_init();
 
     if (argc < 2) {
         show_help(argv[0]);
+        net_cleanup();
         return 1;
     }
 
@@ -107,38 +114,48 @@ int main(int argc, char *argv[]) {
     const char *cmd = argv[1];
 
     if (strcmp(cmd, "daemon") == 0) {
-        // Run the daemon logic (we'll need to call it from here or link it)
         extern int daemon_main();
-        return daemon_main();
+        int res = daemon_main();
+        net_cleanup();
+        return res;
     } 
     else if (strcmp(cmd, "add") == 0) {
         if (argc < 3) {
             printf("Usage: %s add <URL> [filename]\n", argv[0]);
+            net_cleanup();
             return 1;
         }
         DMMessage msg = {0};
         msg.type = DM_CMD_ADD;
         strncpy(msg.url, argv[2], MAX_URL_LEN);
         if (argc == 4) strncpy(msg.filename, argv[3], MAX_FILENAME_LEN);
-        return send_command(&msg);
+        int res = send_command(&msg);
+        net_cleanup();
+        return res;
     }
     else if (strcmp(cmd, "list") == 0) {
         DMMessage msg = {0};
         msg.type = DM_CMD_LIST;
-        return send_command(&msg);
+        int res = send_command(&msg);
+        net_cleanup();
+        return res;
     }
     else if (strcmp(cmd, "stop") == 0) {
         if (argc < 3) {
             printf("Usage: %s stop <id>\n", argv[0]);
+            net_cleanup();
             return 1;
         }
         DMMessage msg = {0};
         msg.type = DM_CMD_STOP;
         msg.job_id = atoi(argv[2]);
-        return send_command(&msg);
+        int res = send_command(&msg);
+        net_cleanup();
+        return res;
     }
     else if (strcmp(cmd, "monitor") == 0) {
         monitor_ui();
+        net_cleanup();
         return 0;
     }
     else {
@@ -146,5 +163,6 @@ int main(int argc, char *argv[]) {
     }
 
     curl_global_cleanup();
+    net_cleanup();
     return 0;
 }
