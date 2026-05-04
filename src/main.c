@@ -14,28 +14,95 @@ void disable_quick_edit() {
 }
 #endif
 
+void show_help(const char *exe) {
+    printf("Usage:\n");
+    printf("  %s daemon         - Start the background manager\n", exe);
+    printf("  %s add <URL> [fn] - Add a new download\n", exe);
+    printf("  %s list           - Show active downloads\n", exe);
+    printf("  %s stop <id>      - Cancel a download\n", exe);
+}
+
+int send_command(DMMessage *msg) {
+    HANDLE pipe = CreateFile(PIPE_NAME, GENERIC_READ | GENERIC_WRITE, 0, NULL, OPEN_EXISTING, 0, NULL);
+    if (pipe == INVALID_HANDLE_VALUE) {
+        fprintf(stderr, "Error: Could not connect to daemon. Is it running? (Try: dm daemon)\n");
+        return 1;
+    }
+
+    DWORD written;
+    WriteFile(pipe, msg, sizeof(DMMessage), &written, NULL);
+    
+    if (msg->type == DM_CMD_LIST) {
+        StatusResponse resp;
+        DWORD read;
+        if (ReadFile(pipe, &resp, sizeof(resp), &read, NULL)) {
+            printf("\n--- Active Downloads ---\n");
+            for (int i = 0; i < resp.job_count; i++) {
+                JobInfo *j = &resp.jobs[i];
+                const char *st = (j->status == DM_STATUS_DOWNLOADING) ? "DOWNLOADING" : 
+                                 (j->status == DM_STATUS_COMPLETED) ? "COMPLETED" :
+                                 (j->status == DM_STATUS_FAILED) ? "FAILED" :
+                                 (j->status == DM_STATUS_CANCELLING) ? "CANCELLING" :
+                                 (j->status == DM_STATUS_CANCELLED) ? "CANCELLED" : "PENDING";
+                printf("[%d] %-20s | %6.2f%% | %s\n", j->id, j->filename, j->progress, st);
+            }
+            if (resp.job_count == 0) printf("No downloads active.\n");
+        }
+    }
+
+    CloseHandle(pipe);
+    return 0;
+}
+
 int main(int argc, char *argv[]) {
 #ifdef _WIN32
     disable_quick_edit();
 #endif
 
-    curl_global_init(CURL_GLOBAL_DEFAULT);
-
-    if (argc < 2 || argc > 3) {
-        printf("Usage: %s <URL> [filename]\n", argv[0]);
+    if (argc < 2) {
+        show_help(argv[0]);
         return 1;
     }
 
-    const char *url = argv[1];
-    const char *filename = NULL;
+    curl_global_init(CURL_GLOBAL_DEFAULT);
 
-    if (argc == 3) {
-        filename = argv[2];
+    const char *cmd = argv[1];
+
+    if (strcmp(cmd, "daemon") == 0) {
+        // Run the daemon logic (we'll need to call it from here or link it)
+        extern int daemon_main();
+        return daemon_main();
+    } 
+    else if (strcmp(cmd, "add") == 0) {
+        if (argc < 3) {
+            printf("Usage: %s add <URL> [filename]\n", argv[0]);
+            return 1;
+        }
+        DMMessage msg = {0};
+        msg.type = DM_CMD_ADD;
+        strncpy(msg.url, argv[2], MAX_URL_LEN);
+        if (argc == 4) strncpy(msg.filename, argv[3], MAX_FILENAME_LEN);
+        return send_command(&msg);
+    }
+    else if (strcmp(cmd, "list") == 0) {
+        DMMessage msg = {0};
+        msg.type = DM_CMD_LIST;
+        return send_command(&msg);
+    }
+    else if (strcmp(cmd, "stop") == 0) {
+        if (argc < 3) {
+            printf("Usage: %s stop <id>\n", argv[0]);
+            return 1;
+        }
+        DMMessage msg = {0};
+        msg.type = DM_CMD_STOP;
+        msg.job_id = atoi(argv[2]);
+        return send_command(&msg);
+    }
+    else {
+        show_help(argv[0]);
     }
 
-    int result = download_file(url, filename);
-
     curl_global_cleanup();
-
-    return result;
+    return 0;
 }

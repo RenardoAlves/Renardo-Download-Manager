@@ -11,6 +11,7 @@ struct DownloadContext {
     int opened;
     char deduced_filename[256];
     int name_is_fixed;
+    JobInfo *info;
 };
 
 // helper to extract a fallback filename from a URL
@@ -76,14 +77,33 @@ static size_t header_callback(char *buffer, size_t size, size_t nitems, void *us
     return numbytes;
 }
 
+static int progress_callback(void *clientp, curl_off_t dltotal, curl_off_t dlnow, curl_off_t ultotal, curl_off_t ulnow) {
+    (void)ultotal;
+    (void)ulnow;
+    struct DownloadContext *ctx = (struct DownloadContext *)clientp;
+    if (ctx->info) {
+        if (ctx->info->status == DM_STATUS_CANCELLING) {
+            return 1; // Aborts the transfer
+        }
+        if (dltotal > 0) {
+            ctx->info->progress = (double)dlnow / (double)dltotal * 100.0;
+        }
+    }
+    return 0;
+}
+
 static size_t write_data(void *ptr, size_t size, size_t nmemb, void *userdata) {
     struct DownloadContext *ctx = (struct DownloadContext *)userdata;
     
     if (!ctx->opened) {
         // Prepend ../downloads/ to the deduced or provided filename
         snprintf(ctx->filepath, sizeof(ctx->filepath), "../downloads/%s", ctx->deduced_filename);
-        printf("\nSaving to: %s\n", ctx->filepath);
         
+        // Update JobInfo with the filename being used
+        if (ctx->info) {
+            strncpy(ctx->info->filename, ctx->deduced_filename, sizeof(ctx->info->filename));
+        }
+
         ctx->fp = fopen(ctx->filepath, "wb");
         if (!ctx->fp) {
             fprintf(stderr, "\nError: Could not create file %s. Does the ../downloads/ folder exist?\n", ctx->filepath);
@@ -96,11 +116,12 @@ static size_t write_data(void *ptr, size_t size, size_t nmemb, void *userdata) {
     return written;
 }
 
-int download_file(const char *url, const char *provided_filename) {
+int download_file(const char *url, const char *provided_filename, JobInfo *info) {
     CURL *curl;
     CURLcode res;
     struct DownloadContext ctx;
     memset(&ctx, 0, sizeof(ctx));
+    ctx.info = info;
 
     // Setup initial filename
     if (provided_filename && strlen(provided_filename) > 0) {
@@ -109,6 +130,11 @@ int download_file(const char *url, const char *provided_filename) {
     } else {
         extract_filename_from_url(url, ctx.deduced_filename, sizeof(ctx.deduced_filename));
         ctx.name_is_fixed = 0;
+    }
+
+    if (info) {
+        info->status = DM_STATUS_DOWNLOADING;
+        strncpy(info->filename, ctx.deduced_filename, sizeof(info->filename));
     }
 
     printf("Downloading: %s\n", url);
@@ -131,18 +157,35 @@ int download_file(const char *url, const char *provided_filename) {
         curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
         curl_easy_setopt(curl, CURLOPT_USERAGENT, "Mozilla/5.0 (Windows NT 10.0; Win64; x64)");
 
+        // Progress tracking
+        curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, progress_callback);
+        curl_easy_setopt(curl, CURLOPT_XFERINFODATA, &ctx);
+
         res = curl_easy_perform(curl);
+        
+        if (info) {
+            curl_off_t speed_t;
+            curl_easy_getinfo(curl, CURLINFO_SPEED_DOWNLOAD_T, &speed_t);
+            info->speed = (long long)speed_t;
+        }
 
         if (res != CURLE_OK) {
-            fprintf(stderr, "\nDownload failed: %s\n", curl_easy_strerror(res));
             if (ctx.opened) {
                 fclose(ctx.fp);
                 remove(ctx.filepath); // Delete the partial file
+            }
+            if (info) {
+                if (res == CURLE_ABORTED_BY_CALLBACK) {
+                    info->status = DM_STATUS_CANCELLED;
+                } else {
+                    info->status = DM_STATUS_FAILED;
+                }
             }
             curl_easy_cleanup(curl);
             return -1;
         }
 
+        if (info) info->status = DM_STATUS_COMPLETED;
         curl_easy_cleanup(curl);
     } else {
         fprintf(stderr, "Failed to initialize curl\n");
