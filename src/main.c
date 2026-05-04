@@ -20,6 +20,7 @@ void show_help(const char *exe) {
     printf("  %s add <URL> [fn] - Add a new download\n", exe);
     printf("  %s list           - Show active downloads\n", exe);
     printf("  %s stop <id>      - Cancel a download\n", exe);
+    printf("  %s monitor        - Show real time tracking of the downloads\n", exe);
 }
 
 int send_command(DMMessage *msg) {
@@ -53,6 +54,32 @@ int send_command(DMMessage *msg) {
     CloseHandle(pipe);
     return 0;
 }
+
+void print_progress_bar(double progress) {
+    int width = 30;
+    int pos = (int)(width * (progress / 100.0));
+    printf("[");
+    for (int i = 0; i < width; i++) {
+        if (i < pos) printf("=");
+        else if (i == pos) printf(">");
+        else printf(" ");
+    }
+    printf("] %6.2f%%", progress);
+}
+
+void monitor_ui() {
+    DMMessage msg = {0};
+    msg.type = DM_CMD_LIST;
+    system("cls"); // Limpa a tela inicial
+
+    while (1) {
+        printf("\033[H"); // Move o cursor para o topo (evita piscar a tela)
+        printf("=== DM REAL-TIME MONITOR === (Pressione Ctrl+C para sair)\n\n");
+        send_command(&msg);
+        Sleep(500); // Atualiza a cada meio segundo
+    }
+}
+
 
 int main(int argc, char *argv[]) {
 #ifdef _WIN32
@@ -98,6 +125,10 @@ int main(int argc, char *argv[]) {
         msg.type = DM_CMD_STOP;
         msg.job_id = atoi(argv[2]);
         return send_command(&msg);
+    }
+    else if (strcmp(cmd, "monitor") == 0) {
+        monitor_ui();
+        return 0;
     }
     else {
         show_help(argv[0]);
